@@ -1,20 +1,15 @@
 use crate as payment;
 use crate::PaymentDetail;
 use frame_support::{
+	derive_impl,
 	dispatch::DispatchClass,
 	parameter_types,
-	traits::{ConstU32, Contains, Everything, GenesisBuild, Hooks, OnFinalize},
+	traits::{ConstU32, Contains, Hooks, OnFinalize},
 };
 use frame_system as system;
 use orml_traits::parameter_type_with_key;
-use sp_core::H256;
-use sp_runtime::{
-	testing::Header,
-	traits::{BlakeTwo256, IdentityLookup},
-	Percent,
-};
+use sp_runtime::{traits::IdentityLookup, BuildStorage, Percent};
 
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
 type Block = frame_system::mocking::MockBlock<Test>;
 pub type Balance = u128;
 
@@ -32,14 +27,10 @@ pub const MARKETPLACE_FEE_PERCENTAGE: u8 = 10;
 pub const CANCEL_BLOCK_BUFFER: u64 = 600;
 
 frame_support::construct_runtime!(
-	pub enum Test where
-		Block = Block,
-		NodeBlock = Block,
-		UncheckedExtrinsic = UncheckedExtrinsic,
-	{
-		System: frame_system::{Pallet, Call, Config, Storage, Event<T>},
-		Tokens: orml_tokens::{Pallet, Call, Config<T>, Storage, Event<T>},
-		Payment: payment::{Pallet, Call, Storage, Event<T>},
+	pub enum Test {
+		System: frame_system,
+		Tokens: orml_tokens,
+		Payment: payment,
 	}
 );
 
@@ -48,31 +39,11 @@ parameter_types! {
 	pub const SS58Prefix: u8 = 42;
 }
 
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl system::Config for Test {
-	type BaseCallFilter = Everything;
-	type BlockWeights = ();
-	type BlockLength = ();
-	type DbWeight = ();
-	type RuntimeOrigin = RuntimeOrigin;
-	type RuntimeCall = RuntimeCall;
-	type Index = u64;
-	type BlockNumber = u64;
-	type Hash = H256;
-	type Hashing = BlakeTwo256;
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
-	type Header = Header;
-	type RuntimeEvent = RuntimeEvent;
-	type BlockHashCount = BlockHashCount;
-	type Version = ();
-	type PalletInfo = PalletInfo;
-	type AccountData = ();
-	type OnNewAccount = ();
-	type OnKilledAccount = ();
-	type SystemWeightInfo = ();
-	type SS58Prefix = SS58Prefix;
-	type OnSetCode = ();
-	type MaxConsumers = frame_support::traits::ConstU32<16>;
+	type Block = Block;
 }
 
 parameter_type_with_key! {
@@ -149,7 +120,7 @@ impl payment::Config for Test {
 
 // Build genesis storage according to the mock runtime.
 pub fn new_test_ext() -> sp_io::TestExternalities {
-	let mut t = system::GenesisConfig::default().build_storage::<Test>().unwrap();
+	let mut t = system::GenesisConfig::<Test>::default().build_storage().unwrap();
 
 	orml_tokens::GenesisConfig::<Test> {
 		balances: vec![

@@ -2,45 +2,20 @@
 
 #![cfg(test)]
 
-use frame_support::{
-	construct_runtime,
-	traits::{ConstU32, ConstU64, Everything},
-};
-use sp_core::H256;
-use sp_runtime::{testing::Header, traits::IdentityLookup};
+use frame_support::{construct_runtime, derive_impl, traits::ConstU32};
+use sp_runtime::{traits::IdentityLookup, BuildStorage};
 
 use super::*;
 
 use crate as nft;
 
 pub type AccountId = u128;
-pub type BlockNumber = u64;
 
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
-	type RuntimeOrigin = RuntimeOrigin;
-	type Index = u64;
-	type BlockNumber = BlockNumber;
-	type RuntimeCall = RuntimeCall;
-	type Hash = H256;
-	type Hashing = ::sp_runtime::traits::BlakeTwo256;
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
-	type Header = Header;
-	type RuntimeEvent = RuntimeEvent;
-	type BlockHashCount = ConstU64<250>;
-	type BlockWeights = ();
-	type BlockLength = ();
-	type Version = ();
-	type PalletInfo = PalletInfo;
-	type AccountData = ();
-	type OnNewAccount = ();
-	type OnKilledAccount = ();
-	type DbWeight = ();
-	type BaseCallFilter = Everything;
-	type SystemWeightInfo = ();
-	type SS58Prefix = ();
-	type OnSetCode = ();
-	type MaxConsumers = ConstU32<16>;
+	type Block = Block;
 }
 
 impl Config for Runtime {
@@ -52,17 +27,12 @@ impl Config for Runtime {
 	type MaxTokenMetadata = ConstU32<1>;
 }
 
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Runtime>;
 type Block = frame_system::mocking::MockBlock<Runtime>;
 
 construct_runtime!(
-	pub enum Runtime where
-		Block = Block,
-		NodeBlock = Block,
-		UncheckedExtrinsic = UncheckedExtrinsic,
-	{
-		System: frame_system::{Pallet, Call, Storage, Config, Event<T>},
-		NonFungibleTokenModule: nft::{Pallet, Storage, Config<T>},
+	pub enum Runtime {
+		System: frame_system,
+		NonFungibleTokenModule: nft,
 	}
 );
 
@@ -83,8 +53,8 @@ impl Default for ExtBuilder {
 
 impl ExtBuilder {
 	pub fn build(self) -> sp_io::TestExternalities {
-		let t = frame_system::GenesisConfig::default()
-			.build_storage::<Runtime>()
+		let t = frame_system::GenesisConfig::<Runtime>::default()
+			.build_storage()
 			.unwrap();
 
 		let mut ext = sp_io::TestExternalities::new(t);

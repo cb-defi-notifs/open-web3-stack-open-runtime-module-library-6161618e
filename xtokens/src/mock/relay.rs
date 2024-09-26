@@ -1,51 +1,35 @@
 use frame_support::{
-	construct_runtime, parameter_types,
-	traits::{ConstU128, ConstU32, ConstU64, Everything, Nothing},
-	weights::IdentityFee,
+	construct_runtime, derive_impl, parameter_types,
+	traits::{ConstU128, ConstU32, Everything, Nothing, ProcessMessage, ProcessMessageError},
+	weights::{IdentityFee, WeightMeter},
 };
 use frame_system::EnsureRoot;
-use sp_core::H256;
-use sp_runtime::{testing::Header, traits::IdentityLookup, AccountId32};
+use sp_runtime::{traits::IdentityLookup, AccountId32};
 
 use crate::Weight;
 use cumulus_primitives_core::ParaId;
-use polkadot_runtime_parachains::{configuration, origin, shared, ump};
-use xcm::v3::prelude::*;
+use polkadot_runtime_parachains::{
+	configuration,
+	inclusion::{AggregateMessageOrigin, UmpQueueId},
+	origin, shared,
+};
+use xcm::v4::prelude::*;
 use xcm_builder::{
 	AccountId32Aliases, AllowTopLevelPaidExecutionFrom, ChildParachainAsNative, ChildParachainConvertsVia,
-	CurrencyAdapter as XcmCurrencyAdapter, FixedWeightBounds, IsConcrete, SignedAccountId32AsNative,
-	SignedToAccountId32, SovereignSignedViaLocation, TakeWeightCredit, UsingComponents,
+	FixedWeightBounds, FungibleAdapter, IsConcrete, SignedAccountId32AsNative, SignedToAccountId32,
+	SovereignSignedViaLocation, TakeWeightCredit, UsingComponents,
 };
 use xcm_executor::{Config, XcmExecutor};
 
 pub type AccountId = AccountId32;
 pub type Balance = u128;
 
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
-	type RuntimeOrigin = RuntimeOrigin;
-	type RuntimeCall = RuntimeCall;
-	type Index = u64;
-	type BlockNumber = u64;
-	type Hash = H256;
-	type Hashing = ::sp_runtime::traits::BlakeTwo256;
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
-	type Header = Header;
-	type RuntimeEvent = RuntimeEvent;
-	type BlockHashCount = ConstU64<250>;
-	type BlockWeights = ();
-	type BlockLength = ();
-	type Version = ();
-	type PalletInfo = PalletInfo;
+	type Block = Block;
 	type AccountData = pallet_balances::AccountData<Balance>;
-	type OnNewAccount = ();
-	type OnKilledAccount = ();
-	type DbWeight = ();
-	type BaseCallFilter = Everything;
-	type SystemWeightInfo = ();
-	type SS58Prefix = ();
-	type OnSetCode = ();
-	type MaxConsumers = ConstU32<16>;
 }
 
 impl pallet_balances::Config for Runtime {
@@ -58,18 +42,24 @@ impl pallet_balances::Config for Runtime {
 	type WeightInfo = ();
 	type MaxReserves = ConstU32<50>;
 	type ReserveIdentifier = [u8; 8];
+	type RuntimeHoldReason = RuntimeHoldReason;
+	type RuntimeFreezeReason = RuntimeFreezeReason;
+	type FreezeIdentifier = [u8; 8];
+	type MaxFreezes = ();
 }
 
-impl shared::Config for Runtime {}
+impl shared::Config for Runtime {
+	type DisabledValidators = ();
+}
 
 impl configuration::Config for Runtime {
 	type WeightInfo = configuration::TestWeightInfo;
 }
 
 parameter_types! {
-	pub KsmLocation: MultiLocation = Here.into();
+	pub KsmLocation: Location = Here.into();
 	pub const KusamaNetwork: NetworkId = NetworkId::Kusama;
-	pub UniversalLocation: InteriorMultiLocation = X1(GlobalConsensus(KusamaNetwork::get()));
+	pub UniversalLocation: InteriorLocation = [GlobalConsensus(KusamaNetwork::get())].into();
 }
 
 pub type SovereignAccountOf = (
@@ -77,8 +67,7 @@ pub type SovereignAccountOf = (
 	AccountId32Aliases<KusamaNetwork, AccountId>,
 );
 
-pub type LocalAssetTransactor =
-	XcmCurrencyAdapter<Balances, IsConcrete<KsmLocation>, SovereignAccountOf, AccountId, ()>;
+pub type LocalAssetTransactor = FungibleAdapter<Balances, IsConcrete<KsmLocation>, SovereignAccountOf, AccountId, ()>;
 
 type LocalOriginConverter = (
 	SovereignSignedViaLocation<SovereignAccountOf, RuntimeOrigin>,
@@ -90,9 +79,9 @@ pub type XcmRouter = super::RelayChainXcmRouter;
 pub type Barrier = (TakeWeightCredit, AllowTopLevelPaidExecutionFrom<Everything>);
 
 parameter_types! {
-	pub Kusama: MultiAssetFilter = Wild(AllOf { fun: WildFungible, id: Concrete(KsmLocation::get()) });
-	pub Statemine: MultiLocation = Parachain(3).into();
-	pub KusamaForStatemine: (MultiAssetFilter, MultiLocation) = (Kusama::get(), Statemine::get());
+	pub Kusama: AssetFilter = Wild(AllOf { fun: WildFungible, id: AssetId(KsmLocation::get()) });
+	pub Statemine: Location = Parachain(3).into();
+	pub KusamaForStatemine: (AssetFilter, Location) = (Kusama::get(), Statemine::get());
 }
 
 pub type TrustedTeleporters = xcm_builder::Case<KusamaForStatemine>;
@@ -129,14 +118,15 @@ impl Config for XcmConfig {
 	type UniversalAliases = Nothing;
 	type CallDispatcher = RuntimeCall;
 	type SafeCallFilter = Everything;
+	type Aliasers = ();
+	type TransactionalProcessor = ();
+	type HrmpNewChannelOpenRequestHandler = ();
+	type HrmpChannelAcceptedHandler = ();
+	type HrmpChannelClosingHandler = ();
+	type XcmRecorder = ();
 }
 
 pub type LocalOriginToLocation = SignedToAccountId32<RuntimeOrigin, AccountId, KusamaNetwork>;
-
-#[cfg(feature = "runtime-benchmarks")]
-parameter_types! {
-	pub ReachableDest: Option<MultiLocation> = Some(Parent.into());
-}
 
 impl pallet_xcm::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
@@ -160,33 +150,62 @@ impl pallet_xcm::Config for Runtime {
 	type SovereignAccountOf = ();
 	type MaxLockers = ConstU32<8>;
 	type WeightInfo = pallet_xcm::TestWeightInfo;
-	#[cfg(feature = "runtime-benchmarks")]
-	type ReachableDest = ReachableDest;
-}
-
-impl ump::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
-	type UmpSink = ump::XcmSink<XcmExecutor<XcmConfig>, Runtime>;
-	type FirstMessageFactorPercent = ConstU64<100>;
-	type ExecuteOverweightOrigin = EnsureRoot<AccountId>;
-	type WeightInfo = polkadot_runtime_parachains::ump::TestWeightInfo;
+	type AdminOrigin = EnsureRoot<AccountId>;
+	type MaxRemoteLockConsumers = ConstU32<0>;
+	type RemoteLockConsumerIdentifier = ();
 }
 
 impl origin::Config for Runtime {}
 
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Runtime>;
 type Block = frame_system::mocking::MockBlock<Runtime>;
 
+parameter_types! {
+	pub MessageQueueServiceWeight: Weight = Weight::from_parts(1_000_000_000, 1_000_000);
+	pub const MessageQueueHeapSize: u32 = 65_536;
+	pub const MessageQueueMaxStale: u32 = 16;
+}
+
+pub struct MessageProcessor;
+impl ProcessMessage for MessageProcessor {
+	type Origin = AggregateMessageOrigin;
+
+	fn process_message(
+		message: &[u8],
+		origin: Self::Origin,
+		meter: &mut WeightMeter,
+		id: &mut [u8; 32],
+	) -> Result<bool, ProcessMessageError> {
+		let para = match origin {
+			AggregateMessageOrigin::Ump(UmpQueueId::Para(para)) => para,
+		};
+		xcm_builder::ProcessXcmMessage::<Junction, xcm_executor::XcmExecutor<XcmConfig>, RuntimeCall>::process_message(
+			message,
+			Junction::Parachain(para.into()),
+			meter,
+			id,
+		)
+	}
+}
+
+impl pallet_message_queue::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type Size = u32;
+	type HeapSize = MessageQueueHeapSize;
+	type MaxStale = MessageQueueMaxStale;
+	type ServiceWeight = MessageQueueServiceWeight;
+	type MessageProcessor = MessageProcessor;
+	type QueueChangeHandler = ();
+	type QueuePausedQuery = ();
+	type WeightInfo = ();
+	type IdleMaxServiceWeight = ();
+}
+
 construct_runtime!(
-	pub enum Runtime where
-		Block = Block,
-		NodeBlock = Block,
-		UncheckedExtrinsic = UncheckedExtrinsic,
-	{
-		System: frame_system::{Pallet, Call, Storage, Config, Event<T>},
-		Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
-		ParasOrigin: origin::{Pallet, Origin},
-		ParasUmp: ump::{Pallet, Call, Storage, Event},
-		XcmPallet: pallet_xcm::{Pallet, Call, Storage, Event<T>, Origin},
+	pub enum Runtime {
+		System: frame_system,
+		Balances: pallet_balances,
+		ParasOrigin: origin,
+		MessageQueue: pallet_message_queue,
+		XcmPallet: pallet_xcm,
 	}
 );

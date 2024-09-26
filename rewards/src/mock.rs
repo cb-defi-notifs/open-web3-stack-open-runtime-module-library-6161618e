@@ -3,13 +3,9 @@
 #![cfg(test)]
 
 use super::*;
-use frame_support::{
-	construct_runtime,
-	traits::{ConstU64, Everything},
-	weights::constants::RocksDbWeight,
-};
-use sp_core::H256;
-use sp_runtime::{testing::Header, traits::IdentityLookup};
+use frame_support::{construct_runtime, derive_impl};
+use orml_traits::parameter_type_with_key;
+use sp_runtime::{traits::IdentityLookup, BuildStorage};
 use sp_std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -19,7 +15,6 @@ pub type AccountId = u128;
 pub type Balance = u64;
 pub type Share = u64;
 pub type PoolId = u32;
-pub type BlockNumber = u64;
 pub type CurrencyId = u32;
 
 pub const ALICE: AccountId = 1;
@@ -29,31 +24,11 @@ pub const DOT_POOL: PoolId = 1;
 pub const NATIVE_COIN: CurrencyId = 0;
 pub const STABLE_COIN: CurrencyId = 1;
 
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
-	type RuntimeOrigin = RuntimeOrigin;
-	type Index = u64;
-	type BlockNumber = BlockNumber;
-	type RuntimeCall = RuntimeCall;
-	type Hash = H256;
-	type Hashing = ::sp_runtime::traits::BlakeTwo256;
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
-	type Header = Header;
-	type RuntimeEvent = RuntimeEvent;
-	type BlockHashCount = ConstU64<250>;
-	type BlockWeights = ();
-	type BlockLength = ();
-	type Version = ();
-	type PalletInfo = PalletInfo;
-	type AccountData = ();
-	type OnNewAccount = ();
-	type OnKilledAccount = ();
-	type DbWeight = RocksDbWeight;
-	type BaseCallFilter = Everything;
-	type SystemWeightInfo = ();
-	type SS58Prefix = ();
-	type OnSetCode = ();
-	type MaxConsumers = ConstU32<16>;
+	type Block = Block;
 }
 
 thread_local! {
@@ -79,25 +54,30 @@ impl RewardHandler<AccountId, CurrencyId> for Handler {
 	}
 }
 
+parameter_type_with_key! {
+	pub MinimalShares: |pool_id: PoolId| -> Share {
+		match pool_id {
+			&DOT_POOL => 10,
+			_ => 0,
+		}
+	};
+}
+
 impl Config for Runtime {
 	type Share = Share;
 	type Balance = Balance;
 	type PoolId = PoolId;
 	type CurrencyId = CurrencyId;
 	type Handler = Handler;
+	type MinimalShares = MinimalShares;
 }
 
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Runtime>;
 type Block = frame_system::mocking::MockBlock<Runtime>;
 
 construct_runtime!(
-	pub enum Runtime where
-		Block = Block,
-		NodeBlock = Block,
-		UncheckedExtrinsic = UncheckedExtrinsic,
-	{
-		System: frame_system::{Pallet, Call, Storage, Config, Event<T>},
-		RewardsModule: rewards::{Pallet, Storage, Call},
+	pub enum Runtime {
+		System: frame_system,
+		RewardsModule: rewards,
 	}
 );
 
@@ -111,8 +91,8 @@ impl Default for ExtBuilder {
 
 impl ExtBuilder {
 	pub fn build(self) -> sp_io::TestExternalities {
-		let t = frame_system::GenesisConfig::default()
-			.build_storage::<Runtime>()
+		let t = frame_system::GenesisConfig::<Runtime>::default()
+			.build_storage()
 			.unwrap();
 
 		t.into()

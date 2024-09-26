@@ -7,8 +7,12 @@ use scale_info::TypeInfo;
 use serde::{Deserialize, Serialize};
 use sp_core::bounded::BoundedVec;
 use sp_io::TestExternalities;
-use sp_runtime::{traits::Convert, AccountId32};
-use xcm_simulator::{decl_test_network, decl_test_parachain, decl_test_relay_chain};
+use sp_runtime::{traits::Convert, AccountId32, BuildStorage};
+use xcm::{
+	v3,
+	v4::{Asset, Location},
+};
+use xcm_simulator::{decl_test_network, decl_test_parachain, decl_test_relay_chain, TestExt};
 
 pub mod para;
 pub mod relay;
@@ -17,7 +21,19 @@ pub const ALICE: AccountId32 = AccountId32::new([0u8; 32]);
 pub const BOB: AccountId32 = AccountId32::new([1u8; 32]);
 pub const CHARLIE: AccountId32 = AccountId32::new([2u8; 32]);
 
-#[derive(Encode, Decode, Eq, PartialEq, Copy, Clone, RuntimeDebug, PartialOrd, Ord, codec::MaxEncodedLen, TypeInfo)]
+#[derive(
+	Encode,
+	Decode,
+	Eq,
+	PartialEq,
+	Copy,
+	Clone,
+	RuntimeDebug,
+	PartialOrd,
+	Ord,
+	parity_scale_codec::MaxEncodedLen,
+	TypeInfo,
+)]
 #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 pub enum CurrencyId {
 	/// Relay chain token.
@@ -39,10 +55,10 @@ pub enum CurrencyId {
 }
 
 pub struct CurrencyIdConvert;
-impl Convert<CurrencyId, Option<MultiLocation>> for CurrencyIdConvert {
-	fn convert(id: CurrencyId) -> Option<MultiLocation> {
-		match id {
-			CurrencyId::R => Some(Parent.into()),
+impl Convert<CurrencyId, Option<Location>> for CurrencyIdConvert {
+	fn convert(id: CurrencyId) -> Option<Location> {
+		let loc: Option<v3::Location> = match id {
+			CurrencyId::R => Some(Parent.try_into().unwrap()),
 			CurrencyId::A => Some(
 				(
 					Parent,
@@ -91,50 +107,57 @@ impl Convert<CurrencyId, Option<MultiLocation>> for CurrencyIdConvert {
 				)
 					.into(),
 			),
-			CurrencyId::RegisteredAsset(id) => AssetRegistry::multilocation(&id).unwrap_or_default(),
-		}
+			CurrencyId::RegisteredAsset(id) => AssetRegistry::location(&id).unwrap_or_default(),
+		};
+		loc.and_then(|l| l.try_into().ok())
 	}
 }
-impl Convert<MultiLocation, Option<CurrencyId>> for CurrencyIdConvert {
-	fn convert(l: MultiLocation) -> Option<CurrencyId> {
+impl Convert<Location, Option<CurrencyId>> for CurrencyIdConvert {
+	fn convert(l: Location) -> Option<CurrencyId> {
+		use xcm::v4::Junction::*;
+
 		let a: Vec<u8> = "A".into();
 		let a1: Vec<u8> = "A1".into();
 		let b: Vec<u8> = "B".into();
 		let b1: Vec<u8> = "B1".into();
 		let b2: Vec<u8> = "B2".into();
 		let d: Vec<u8> = "D".into();
-		if l == MultiLocation::parent() {
+		if l == Location::parent() {
 			return Some(CurrencyId::R);
 		}
-		let currency_id = match l.clone() {
-			MultiLocation { parents, interior } if parents == 1 => match interior {
-				X2(Parachain(1), GeneralKey { data, .. }) if data.to_vec() == a => Some(CurrencyId::A),
-				X2(Parachain(1), GeneralKey { data, .. }) if data.to_vec() == a1 => Some(CurrencyId::A1),
-				X2(Parachain(2), GeneralKey { data, .. }) if data.to_vec() == b => Some(CurrencyId::B),
-				X2(Parachain(2), GeneralKey { data, .. }) if data.to_vec() == b1 => Some(CurrencyId::B1),
-				X2(Parachain(2), GeneralKey { data, .. }) if data.to_vec() == b2 => Some(CurrencyId::B2),
-				X2(Parachain(4), GeneralKey { data, .. }) if data.to_vec() == d => Some(CurrencyId::D),
+		let currency_id = match l.clone().unpack() {
+			(parents, interior) if parents == 1 => match interior {
+				[Parachain(1), GeneralKey { data, .. }] if data.to_vec() == a => Some(CurrencyId::A),
+				[Parachain(1), GeneralKey { data, .. }] if data.to_vec() == a1 => Some(CurrencyId::A1),
+				[Parachain(2), GeneralKey { data, .. }] if data.to_vec() == b => Some(CurrencyId::B),
+				[Parachain(2), GeneralKey { data, .. }] if data.to_vec() == b1 => Some(CurrencyId::B1),
+				[Parachain(2), GeneralKey { data, .. }] if data.to_vec() == b2 => Some(CurrencyId::B2),
+				[Parachain(4), GeneralKey { data, .. }] if data.to_vec() == d => Some(CurrencyId::D),
 				_ => None,
 			},
-			MultiLocation { parents, interior } if parents == 0 => match interior {
-				X1(GeneralKey { data, .. }) if data.to_vec() == a => Some(CurrencyId::A),
-				X1(GeneralKey { data, .. }) if data.to_vec() == b => Some(CurrencyId::B),
-				X1(GeneralKey { data, .. }) if data.to_vec() == a1 => Some(CurrencyId::A1),
-				X1(GeneralKey { data, .. }) if data.to_vec() == b1 => Some(CurrencyId::B1),
-				X1(GeneralKey { data, .. }) if data.to_vec() == b2 => Some(CurrencyId::B2),
-				X1(GeneralKey { data, .. }) if data.to_vec() == d => Some(CurrencyId::D),
+			(parents, interior) if parents == 0 => match interior {
+				[GeneralKey { data, .. }] if data.to_vec() == a => Some(CurrencyId::A),
+				[GeneralKey { data, .. }] if data.to_vec() == b => Some(CurrencyId::B),
+				[GeneralKey { data, .. }] if data.to_vec() == a1 => Some(CurrencyId::A1),
+				[GeneralKey { data, .. }] if data.to_vec() == b1 => Some(CurrencyId::B1),
+				[GeneralKey { data, .. }] if data.to_vec() == b2 => Some(CurrencyId::B2),
+				[GeneralKey { data, .. }] if data.to_vec() == d => Some(CurrencyId::D),
 				_ => None,
 			},
 			_ => None,
 		};
-		currency_id.or_else(|| AssetRegistry::location_to_asset_id(&l).map(CurrencyId::RegisteredAsset))
+		currency_id.or_else(|| {
+			let loc = v3::Location::try_from(l.clone()).ok()?;
+			AssetRegistry::location_to_asset_id(&loc).map(CurrencyId::RegisteredAsset)
+		})
 	}
 }
-impl Convert<MultiAsset, Option<CurrencyId>> for CurrencyIdConvert {
-	fn convert(a: MultiAsset) -> Option<CurrencyId> {
-		if let MultiAsset {
+impl Convert<Asset, Option<CurrencyId>> for CurrencyIdConvert {
+	fn convert(a: Asset) -> Option<CurrencyId> {
+		use xcm::v4::prelude::*;
+		if let Asset {
 			fun: Fungible(_),
-			id: Concrete(id),
+			id: AssetId(id),
 		} = a
 		{
 			Self::convert(id)
@@ -150,8 +173,8 @@ pub type Amount = i128;
 decl_test_parachain! {
 	pub struct ParaA {
 		Runtime = para::Runtime,
-		XcmpMessageHandler = para::XcmpQueue,
-		DmpMessageHandler = para::DmpQueue,
+		XcmpMessageHandler = para::MsgQueue,
+		DmpMessageHandler = para::MsgQueue,
 		new_ext = para_ext(1, None),
 	}
 }
@@ -159,8 +182,8 @@ decl_test_parachain! {
 decl_test_parachain! {
 	pub struct ParaB {
 		Runtime = para::Runtime,
-		XcmpMessageHandler = para::XcmpQueue,
-		DmpMessageHandler = para::DmpQueue,
+		XcmpMessageHandler = para::MsgQueue,
+		DmpMessageHandler = para::MsgQueue,
 		new_ext = para_ext(2, None),
 	}
 }
@@ -168,8 +191,8 @@ decl_test_parachain! {
 decl_test_parachain! {
 	pub struct ParaC {
 		Runtime = para::Runtime,
-		XcmpMessageHandler = para::XcmpQueue,
-		DmpMessageHandler = para::DmpQueue,
+		XcmpMessageHandler = para::MsgQueue,
+		DmpMessageHandler = para::MsgQueue,
 		new_ext = para_ext(3, None),
 	}
 }
@@ -177,15 +200,15 @@ decl_test_parachain! {
 decl_test_parachain! {
 	pub struct ParaG {
 		Runtime = para::Runtime,
-		XcmpMessageHandler = para::XcmpQueue,
-		DmpMessageHandler = para::DmpQueue,
+		XcmpMessageHandler = para::MsgQueue,
+		DmpMessageHandler = para::MsgQueue,
 		new_ext = para_ext(4, Some((
 			vec![(
 				4,
-				AssetMetadata::<Balance, para::CustomMetadata>::encode(&AssetMetadata {
+				AssetMetadata::<Balance, para::CustomMetadata, para::StringLimit>::encode(&AssetMetadata {
 				decimals: 12,
-				name: "para G native token".as_bytes().to_vec(),
-				symbol: "paraG".as_bytes().to_vec(),
+				name: BoundedVec::truncate_from("para G native token".as_bytes().to_vec()),
+				symbol: BoundedVec::truncate_from("paraG".as_bytes().to_vec()),
 				existential_deposit: 0,
 				location: None,
 				additional: para::CustomMetadata {
@@ -194,10 +217,10 @@ decl_test_parachain! {
 			})),
 			(
 				5,
-				AssetMetadata::<Balance, para::CustomMetadata>::encode(&AssetMetadata {
+				AssetMetadata::<Balance, para::CustomMetadata, para::StringLimit>::encode(&AssetMetadata {
 				decimals: 12,
-				name: "para G foreign token".as_bytes().to_vec(),
-				symbol: "paraF".as_bytes().to_vec(),
+				name: BoundedVec::truncate_from("para G foreign token".as_bytes().to_vec()),
+				symbol: BoundedVec::truncate_from("paraF".as_bytes().to_vec()),
 				existential_deposit: 0,
 				location: None,
 				additional: para::CustomMetadata {
@@ -211,7 +234,11 @@ decl_test_parachain! {
 decl_test_relay_chain! {
 	pub struct Relay {
 		Runtime = relay::Runtime,
+		RuntimeCall = relay::RuntimeCall,
+		RuntimeEvent = relay::RuntimeEvent,
 		XcmConfig = relay::XcmConfig,
+		MessageQueue = relay::MessageQueue,
+		System = relay::System,
 		new_ext = relay_ext(),
 	}
 }
@@ -232,16 +259,10 @@ pub type ParaTokens = orml_tokens::Pallet<para::Runtime>;
 pub type ParaXTokens = orml_xtokens::Pallet<para::Runtime>;
 
 pub fn para_ext(para_id: u32, asset_data: Option<(Vec<(u32, Vec<u8>)>, u32)>) -> TestExternalities {
-	use para::{Runtime, System};
+	use para::{MsgQueue, Runtime, System};
 
-	let mut t = frame_system::GenesisConfig::default()
-		.build_storage::<Runtime>()
-		.unwrap();
-
-	let parachain_info_config = parachain_info::GenesisConfig {
-		parachain_id: para_id.into(),
-	};
-	<parachain_info::GenesisConfig as GenesisBuild<Runtime, _>>::assimilate_storage(&parachain_info_config, &mut t)
+	let mut t = frame_system::GenesisConfig::<Runtime>::default()
+		.build_storage()
 		.unwrap();
 
 	orml_tokens::GenesisConfig::<Runtime> {
@@ -257,15 +278,18 @@ pub fn para_ext(para_id: u32, asset_data: Option<(Vec<(u32, Vec<u8>)>, u32)>) ->
 	}
 
 	let mut ext = TestExternalities::new(t);
-	ext.execute_with(|| System::set_block_number(1));
+	ext.execute_with(|| {
+		System::set_block_number(1);
+		MsgQueue::set_para_id(para_id.into());
+	});
 	ext
 }
 
 pub fn relay_ext() -> sp_io::TestExternalities {
 	use relay::{Runtime, System};
 
-	let mut t = frame_system::GenesisConfig::default()
-		.build_storage::<Runtime>()
+	let mut t = frame_system::GenesisConfig::<Runtime>::default()
+		.build_storage()
 		.unwrap();
 
 	pallet_balances::GenesisConfig::<Runtime> {

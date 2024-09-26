@@ -3,14 +3,10 @@
 use super::*;
 
 use frame_support::{
-	construct_runtime, parameter_types,
-	traits::{ConstU32, ConstU64, Everything, SortedMembers},
+	construct_runtime, derive_impl, parameter_types,
+	traits::{ConstU32, SortedMembers},
 };
-use sp_core::H256;
-use sp_runtime::{
-	testing::Header,
-	traits::{BlakeTwo256, IdentityLookup},
-};
+use sp_runtime::{traits::IdentityLookup, BuildStorage};
 
 use std::cell::RefCell;
 
@@ -22,35 +18,16 @@ pub type AccountId = u128;
 type Key = u32;
 type Value = u32;
 
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Test {
-	type RuntimeOrigin = RuntimeOrigin;
-	type RuntimeCall = RuntimeCall;
-	type Index = u64;
-	type BlockNumber = u64;
-	type Hash = H256;
-	type Hashing = BlakeTwo256;
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
-	type Header = Header;
-	type RuntimeEvent = RuntimeEvent;
-	type BlockHashCount = ConstU64<250>;
-	type BlockWeights = ();
-	type BlockLength = ();
-	type Version = ();
-	type PalletInfo = PalletInfo;
-	type AccountData = ();
-	type OnNewAccount = ();
-	type OnKilledAccount = ();
-	type DbWeight = ();
-	type BaseCallFilter = Everything;
-	type SystemWeightInfo = ();
-	type SS58Prefix = ();
-	type OnSetCode = ();
-	type MaxConsumers = ConstU32<16>;
+	type Block = Block;
 }
 
 thread_local! {
 	static TIME: RefCell<u32> = RefCell::new(0);
+	static MEMBERS: RefCell<Vec<AccountId>> = RefCell::new(vec![1, 2, 3]);
 }
 
 pub struct Timestamp;
@@ -70,14 +47,19 @@ impl Timestamp {
 
 parameter_types! {
 	pub const RootOperatorAccountId: AccountId = 4;
-	pub static OracleMembers: Vec<AccountId> = vec![1, 2, 3];
+	pub const MaxFeedValues: u32 = 5;
 }
 
 pub struct Members;
 
 impl SortedMembers<AccountId> for Members {
 	fn sorted_members() -> Vec<AccountId> {
-		OracleMembers::get()
+		MEMBERS.with(|v| v.borrow().clone())
+	}
+
+	#[cfg(feature = "runtime-benchmarks")]
+	fn add(who: &AccountId) {
+		MEMBERS.with(|v| v.borrow_mut().push(*who));
 	}
 }
 
@@ -92,26 +74,28 @@ impl Config for Test {
 	type Members = Members;
 	type WeightInfo = ();
 	type MaxHasDispatchedSize = ConstU32<100>;
+	type MaxFeedValues = MaxFeedValues;
+	#[cfg(feature = "runtime-benchmarks")]
+	type BenchmarkHelper = ();
 }
 
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
 type Block = frame_system::mocking::MockBlock<Test>;
 
 construct_runtime!(
-	pub enum Test where
-		Block = Block,
-		NodeBlock = Block,
-		UncheckedExtrinsic = UncheckedExtrinsic,
-	{
-		System: frame_system::{Pallet, Call, Storage, Config, Event<T>},
-		ModuleOracle: oracle::{Pallet, Storage, Call, Event<T>},
+	pub enum Test {
+		System: frame_system,
+		ModuleOracle: oracle,
 	}
 );
+
+pub fn set_members(members: Vec<AccountId>) {
+	MEMBERS.with(|v| *v.borrow_mut() = members);
+}
 
 // This function basically just builds a genesis storage key/value store
 // according to our desired mockup.
 pub fn new_test_ext() -> sp_io::TestExternalities {
-	let storage = frame_system::GenesisConfig::default().build_storage::<Test>().unwrap();
+	let storage = frame_system::GenesisConfig::<Test>::default().build_storage().unwrap();
 
 	let mut t: sp_io::TestExternalities = storage.into();
 

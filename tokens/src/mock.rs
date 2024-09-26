@@ -4,19 +4,17 @@
 
 use super::*;
 use frame_support::{
-	construct_runtime, parameter_types,
+	construct_runtime, derive_impl, parameter_types,
 	traits::{
-		ChangeMembers, ConstU32, ConstU64, ContainsLengthBound, Everything, GenesisBuild, SaturatingCurrencyToVote,
-		SortedMembers,
+		tokens::{PayFromAccount, UnityAssetBalanceConversion},
+		ChangeMembers, ConstU32, ConstU64, ContainsLengthBound, SortedMembers,
 	},
 	PalletId,
 };
 use orml_traits::parameter_type_with_key;
-use sp_core::H256;
 use sp_runtime::{
-	testing::Header,
 	traits::{AccountIdConversion, IdentityLookup},
-	AccountId32, Permill,
+	AccountId32, BuildStorage, Permill,
 };
 use sp_std::cell::RefCell;
 
@@ -41,31 +39,11 @@ pub const RID_2: ReserveIdentifier = [2u8; 8];
 
 use crate as tokens;
 
+#[derive_impl(frame_system::config_preludes::TestDefaultConfig as frame_system::DefaultConfig)]
 impl frame_system::Config for Runtime {
-	type RuntimeOrigin = RuntimeOrigin;
-	type RuntimeCall = RuntimeCall;
-	type Index = u64;
-	type BlockNumber = u64;
-	type Hash = H256;
-	type Hashing = ::sp_runtime::traits::BlakeTwo256;
 	type AccountId = AccountId;
 	type Lookup = IdentityLookup<Self::AccountId>;
-	type Header = Header;
-	type RuntimeEvent = RuntimeEvent;
-	type BlockHashCount = ConstU64<250>;
-	type BlockWeights = ();
-	type BlockLength = ();
-	type Version = ();
-	type PalletInfo = PalletInfo;
-	type AccountData = ();
-	type OnNewAccount = ();
-	type OnKilledAccount = ();
-	type DbWeight = ();
-	type BaseCallFilter = Everything;
-	type SystemWeightInfo = ();
-	type SS58Prefix = ();
-	type OnSetCode = ();
-	type MaxConsumers = ConstU32<16>;
+	type Block = Block;
 }
 
 thread_local! {
@@ -104,33 +82,33 @@ impl ContainsLengthBound for TenToFourteen {
 
 parameter_types! {
 	pub const ProposalBond: Permill = Permill::from_percent(5);
-	pub const ProposalBondMinimum: u64 = 1;
-	pub const ProposalBondMaximum: u64 = 5;
-	pub const SpendPeriod: u64 = 2;
 	pub const Burn: Permill = Permill::from_percent(50);
 	pub const TreasuryPalletId: PalletId = PalletId(*b"py/trsry");
 	pub const GetTokenId: CurrencyId = DOT;
-	pub const MaxApprovals: u32 = 100;
+	pub TreasuryAccount: AccountId = Treasury::account_id();
 }
 
 pub type MockCurrencyAdapter = CurrencyAdapter<Runtime, GetTokenId>;
 impl pallet_treasury::Config for Runtime {
 	type PalletId = TreasuryPalletId;
 	type Currency = MockCurrencyAdapter;
-	type ApproveOrigin = frame_system::EnsureRoot<AccountId>;
 	type RejectOrigin = frame_system::EnsureRoot<AccountId>;
 	type RuntimeEvent = RuntimeEvent;
-	type OnSlash = ();
-	type ProposalBond = ProposalBond;
-	type ProposalBondMinimum = ProposalBondMinimum;
-	type ProposalBondMaximum = ProposalBondMaximum;
-	type SpendPeriod = SpendPeriod;
+	type SpendPeriod = ConstU64<2>;
 	type Burn = Burn;
-	type BurnDestination = ();
-	type SpendFunds = ();
+	type BurnDestination = (); // Just gets burned.
 	type WeightInfo = ();
-	type MaxApprovals = MaxApprovals;
-	type SpendOrigin = frame_support::traits::NeverEnsureOrigin<Balance>;
+	type SpendFunds = ();
+	type MaxApprovals = ConstU32<100>;
+	type SpendOrigin = frame_support::traits::NeverEnsureOrigin<u64>;
+	type AssetKind = ();
+	type Beneficiary = Self::AccountId;
+	type BeneficiaryLookup = IdentityLookup<Self::Beneficiary>;
+	type Paymaster = PayFromAccount<MockCurrencyAdapter, TreasuryAccount>;
+	type BalanceConverter = UnityAssetBalanceConversion;
+	type PayoutPeriod = ConstU64<10>;
+	#[cfg(feature = "runtime-benchmarks")]
+	type BenchmarkHelper = ();
 }
 
 thread_local! {
@@ -189,7 +167,7 @@ impl pallet_elections_phragmen::Config for Runtime {
 	type PalletId = ElectionsPhragmenPalletId;
 	type RuntimeEvent = RuntimeEvent;
 	type Currency = MockCurrencyAdapter;
-	type CurrencyToVote = SaturatingCurrencyToVote;
+	type CurrencyToVote = sp_staking::currency_to_vote::SaturatingCurrencyToVote;
 	type ChangeMembers = TestChangeMembers;
 	type InitializeMembers = ();
 	type CandidacyBond = ConstU64<3>;
@@ -422,19 +400,14 @@ impl Config for Runtime {
 }
 pub type TreasuryCurrencyAdapter = <Runtime as pallet_treasury::Config>::Currency;
 
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Runtime>;
 type Block = frame_system::mocking::MockBlock<Runtime>;
 
 construct_runtime!(
-	pub enum Runtime where
-		Block = Block,
-		NodeBlock = Block,
-		UncheckedExtrinsic = UncheckedExtrinsic,
-	{
-		System: frame_system::{Pallet, Call, Storage, Config, Event<T>},
-		Tokens: tokens::{Pallet, Storage, Event<T>, Config<T>},
-		Treasury: pallet_treasury::{Pallet, Call, Storage, Config, Event<T>},
-		ElectionsPhragmen: pallet_elections_phragmen::{Pallet, Call, Storage, Event<T>},
+	pub enum Runtime {
+		System: frame_system,
+		Tokens: tokens,
+		Treasury: pallet_treasury,
+		ElectionsPhragmen: pallet_elections_phragmen,
 	}
 );
 
@@ -451,8 +424,8 @@ impl ExtBuilder {
 	}
 
 	pub fn build(self) -> sp_io::TestExternalities {
-		let mut t = frame_system::GenesisConfig::default()
-			.build_storage::<Runtime>()
+		let mut t = frame_system::GenesisConfig::<Runtime>::default()
+			.build_storage()
 			.unwrap();
 
 		tokens::GenesisConfig::<Runtime> {
@@ -462,7 +435,9 @@ impl ExtBuilder {
 		.unwrap();
 
 		if self.treasury_genesis {
-			GenesisBuild::<Runtime>::assimilate_storage(&pallet_treasury::GenesisConfig::default(), &mut t).unwrap();
+			pallet_treasury::GenesisConfig::<Runtime>::default()
+				.assimilate_storage(&mut t)
+				.unwrap();
 
 			pallet_elections_phragmen::GenesisConfig::<Runtime> {
 				members: vec![(TREASURY_ACCOUNT, 10)],
